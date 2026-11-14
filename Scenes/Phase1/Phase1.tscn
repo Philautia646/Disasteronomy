@@ -1,0 +1,9 @@
+[gd_scene format=3 uid="uid://cmxx5wr2g4ce1"]
+
+[ext_resource type="Script" uid="uid://crl4jjf6cg5gd" path="res://Scripts/Phase1/Phase1Manager.cs" id="1_6jw06"]
+[ext_resource type="PackedScene" uid="uid://betred7ss4vte" path="res://Scripts/Phase1/EvaPlayer.tscn" id="2_3qmat"]
+
+[node name="Phase1Manager" type="Node2D" unique_id=886140898]
+script = ExtResource("1_6jw06")
+
+[node name="EvaPlayer" parent="." unique_id=1550413120 instance=ExtResource("2_3qmat")]

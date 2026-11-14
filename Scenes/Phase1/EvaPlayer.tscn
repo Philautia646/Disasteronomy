@@ -1,0 +1,6 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" uid="uid://b6qyf4hwhqu5v" path="res://Scripts/Phase1/EvaPlayer.cs" id="1_eva_player_script"]
+
+
+[node name="EvaPlayer" type="EvaPlayer" script = ExtResource("1_eva_player_script")]

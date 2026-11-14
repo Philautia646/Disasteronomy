@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://betred7ss4vte"]
+
+[ext_resource type="Script" uid="uid://b6qyf4hwhqu5v" path="res://Scripts/Phase1/EvaPlayer.cs" id="1_66rhq"]
+
+[node name="EvaPlayer" type="CharacterBody2D" unique_id=1550413120]
+script = ExtResource("1_66rhq")

@@ -1,0 +1,9 @@
+[gd_scene format=3 uid="uid://phase1_main"]
+
+[ext_resource type="Script" path="res://Scripts/Phase1/Phase1Manager.cs" id="1_phase1_manager_script"]
+[ext_resource type="PackedScene" path="res://Scenes/Phase1/EvaPlayer.tscn" id="2_eva_player_scene"]
+
+[node name="Phase1Manager" type="Phase1Manager" script = ExtResource("1_phase1_manager_script")]
+[node name="MultiplayerSpawner" type="MultiplayerSpawner" parent="."]
+spawn_path = "."
+network_player = ExtResource("2_eva_player_scene")
