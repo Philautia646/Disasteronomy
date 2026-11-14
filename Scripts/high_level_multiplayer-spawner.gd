@@ -24,6 +24,12 @@ func spawn_player(id: int) -> void:
 
 	var player: Node = network_player.instantiate()
 	player.name = str(id)
+	var player_2d := player as Node2D
+	if player_2d == null:
+		push_error("A cena do jogador precisa herdar Node2D.")
+		player.queue_free()
+		return
+	player_2d.position = Vector2(400 + (id - 1) * 80, 450)
 
 	var target_parent: Node = get_node_or_null(spawn_path)
 	if target_parent == null:

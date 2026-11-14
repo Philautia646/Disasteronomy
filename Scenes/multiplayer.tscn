@@ -2,8 +2,31 @@
 
 [ext_resource type="Script" uid="uid://dffv2w3iafu35" path="res://Scripts/high_level_ui.gd" id="1_q0ldm"]
 [ext_resource type="Script" uid="uid://ce82c6twd42dp" path="res://Scripts/VoiceChat.cs" id="2_eumxw"]
+[ext_resource type="Script" path="res://Scripts/high_level_multiplayer-spawner.gd" id="3_spawner"]
+[ext_resource type="PackedScene" uid="uid://1shx8uqhmok5" path="res://Scenes/Player.tscn" id="4_player"]
 
 [sub_resource type="AudioStreamMicrophone" id="AudioStreamMicrophone_j3pel"]
+
+[sub_resource type="RectangleShape2D" id="GroundShape"]
+size = Vector2(5000, 80)
+
+[sub_resource type="RectangleShape2D" id="PlatformShapeA"]
+size = Vector2(220, 24)
+
+[sub_resource type="RectangleShape2D" id="PlatformShapeB"]
+size = Vector2(220, 24)
+
+[sub_resource type="RectangleShape2D" id="PlatformShapeC"]
+size = Vector2(220, 24)
+
+[sub_resource type="RectangleShape2D" id="PlatformShapeD"]
+size = Vector2(240, 24)
+
+[sub_resource type="RectangleShape2D" id="PlatformShapeE"]
+size = Vector2(220, 24)
+
+[sub_resource type="RectangleShape2D" id="PlatformShapeF"]
+size = Vector2(240, 24)
 
 [node name="Multiplayer" type="Control" unique_id=870880779]
 layout_mode = 3
@@ -13,6 +36,97 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("1_q0ldm")
+
+[node name="Background" type="ColorRect" parent="."]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(0.16, 0.21, 0.34, 1)
+
+[node name="World" type="Node2D" parent="."]
+
+[node name="Platforms" type="Node2D" parent="World"]
+
+[node name="Ground" type="StaticBody2D" parent="World/Platforms"]
+position = Vector2(1800, 600)
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="World/Platforms/Ground"]
+shape = SubResource("GroundShape")
+
+[node name="Visual" type="Polygon2D" parent="World/Platforms/Ground"]
+polygon = PackedVector2Array(-2500, -40, 2500, -40, 2500, 40, -2500, 40)
+color = Color(0.28, 0.57, 0.36, 1)
+
+[node name="PlatformA" type="StaticBody2D" parent="World/Platforms"]
+position = Vector2(560, 470)
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="World/Platforms/PlatformA"]
+shape = SubResource("PlatformShapeA")
+
+[node name="Visual" type="Polygon2D" parent="World/Platforms/PlatformA"]
+polygon = PackedVector2Array(-110, -12, 110, -12, 110, 12, -110, 12)
+color = Color(0.65, 0.48, 0.28, 1)
+
+[node name="PlatformB" type="StaticBody2D" parent="World/Platforms"]
+position = Vector2(850, 370)
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="World/Platforms/PlatformB"]
+shape = SubResource("PlatformShapeB")
+
+[node name="Visual" type="Polygon2D" parent="World/Platforms/PlatformB"]
+polygon = PackedVector2Array(-110, -12, 110, -12, 110, 12, -110, 12)
+color = Color(0.65, 0.48, 0.28, 1)
+
+[node name="PlatformC" type="StaticBody2D" parent="World/Platforms"]
+position = Vector2(1140, 270)
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="World/Platforms/PlatformC"]
+shape = SubResource("PlatformShapeC")
+
+[node name="Visual" type="Polygon2D" parent="World/Platforms/PlatformC"]
+polygon = PackedVector2Array(-110, -12, 110, -12, 110, 12, -110, 12)
+color = Color(0.65, 0.48, 0.28, 1)
+
+[node name="PlatformD" type="StaticBody2D" parent="World/Platforms"]
+position = Vector2(1430, 390)
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="World/Platforms/PlatformD"]
+shape = SubResource("PlatformShapeD")
+
+[node name="Visual" type="Polygon2D" parent="World/Platforms/PlatformD"]
+polygon = PackedVector2Array(-120, -12, 120, -12, 120, 12, -120, 12)
+color = Color(0.65, 0.48, 0.28, 1)
+
+[node name="PlatformE" type="StaticBody2D" parent="World/Platforms"]
+position = Vector2(1770, 300)
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="World/Platforms/PlatformE"]
+shape = SubResource("PlatformShapeE")
+
+[node name="Visual" type="Polygon2D" parent="World/Platforms/PlatformE"]
+polygon = PackedVector2Array(-110, -12, 110, -12, 110, 12, -110, 12)
+color = Color(0.65, 0.48, 0.28, 1)
+
+[node name="PlatformF" type="StaticBody2D" parent="World/Platforms"]
+position = Vector2(2110, 420)
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="World/Platforms/PlatformF"]
+shape = SubResource("PlatformShapeF")
+
+[node name="Visual" type="Polygon2D" parent="World/Platforms/PlatformF"]
+polygon = PackedVector2Array(-120, -12, 120, -12, 120, 12, -120, 12)
+color = Color(0.65, 0.48, 0.28, 1)
+
+[node name="Players" type="Node2D" parent="World"]
+
+[node name="PlayerSpawner" type="MultiplayerSpawner" parent="."]
+_spawnable_scenes = PackedStringArray("uid://1shx8uqhmok5")
+spawn_path = NodePath("../World/Players")
+script = ExtResource("3_spawner")
+network_player = ExtResource("4_player")
 
 [node name="VoiceChat" type="Node" parent="." unique_id=604433106]
 script = ExtResource("2_eumxw")

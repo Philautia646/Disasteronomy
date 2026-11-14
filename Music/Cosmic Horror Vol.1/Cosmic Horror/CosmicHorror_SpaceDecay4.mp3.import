@@ -1,0 +1,19 @@
+[remap]
+
+importer="mp3"
+type="AudioStreamMP3"
+uid="uid://dvieek55m5oix"
+path="res://.godot/imported/CosmicHorror_SpaceDecay4.mp3-8e9193359baa2be6edebf00f060b2a31.mp3str"
+
+[deps]
+
+source_file="res://Music/Cosmic Horror Vol.1/Cosmic Horror/CosmicHorror_SpaceDecay4.mp3"
+dest_files=["res://.godot/imported/CosmicHorror_SpaceDecay4.mp3-8e9193359baa2be6edebf00f060b2a31.mp3str"]
+
+[params]
+
+loop=false
+loop_offset=0
+bpm=0
+beat_count=0
+bar_beats=4

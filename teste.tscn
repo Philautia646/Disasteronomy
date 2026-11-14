@@ -1,13 +1,7 @@
 [gd_scene format=3 uid="uid://ciun7kx4mh040"]
 
-[ext_resource type="Script" uid="uid://bevibcwm81v12" path="res://Scripts/high_level_multiplayer-spawner.gd" id="1_7w86a"]
 [ext_resource type="PackedScene" uid="uid://bhx58cq6q0ph3" path="res://Scenes/multiplayer.tscn" id="2_s2wow"]
 
 [node name="Teste" type="Node2D" unique_id=2017568960]
-
-[node name="MultiplayerSpawner" type="MultiplayerSpawner" parent="." unique_id=1589749977]
-_spawnable_scenes = PackedStringArray("uid://1shx8uqhmok5")
-spawn_path = NodePath("..")
-script = ExtResource("1_7w86a")
 
 [node name="Multiplayer" parent="." unique_id=870880779 instance=ExtResource("2_s2wow")]

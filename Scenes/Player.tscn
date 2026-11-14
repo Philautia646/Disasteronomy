@@ -521,22 +521,25 @@ scale = Vector2(4, 4)
 script = ExtResource("1_wi0c6")
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="." unique_id=702990797]
-position = Vector2(0, 5.5)
+position = Vector2(1, -12.75)
 shape = SubResource("RectangleShape2D_c2a8f")
 
 [node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="." unique_id=2077756884]
+position = Vector2(0, -18)
 sprite_frames = SubResource("SpriteFrames_mkerq")
-animation = &"walk_up"
+animation = &"idle_right"
 
 [node name="Camera2D" type="Camera2D" parent="." unique_id=1186331334]
 offset = Vector2(5, 5)
+zoom = Vector2(0.75, 0.75)
+position_smoothing_enabled = true
 
 [node name="NicknameLabel" type="Label" parent="." unique_id=1124856840]
 z_index = 1
 offset_left = -6.25
-offset_top = -15.75
+offset_top = -37.5
 offset_right = 56.75
-offset_bottom = 7.25
+offset_bottom = -14.5
 scale = Vector2(0.20999984, 0.2)
 theme_override_fonts/font = ExtResource("10_yoq75")
 text = "Jogador"

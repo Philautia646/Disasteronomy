@@ -1,0 +1,19 @@
+[remap]
+
+importer="mp3"
+type="AudioStreamMP3"
+uid="uid://bn8wft8fsb7lw"
+path="res://.godot/imported/CosmicHorror_Rumble4.mp3-695547d0843e4822f3698bbcd01e96e1.mp3str"
+
+[deps]
+
+source_file="res://Music/Cosmic Horror Vol.1/Cosmic Horror/CosmicHorror_Rumble4.mp3"
+dest_files=["res://.godot/imported/CosmicHorror_Rumble4.mp3-695547d0843e4822f3698bbcd01e96e1.mp3str"]
+
+[params]
+
+loop=false
+loop_offset=0
+bpm=0
+beat_count=0
+bar_beats=4
