@@ -9,15 +9,14 @@ public partial class Phase1Manager : Node2D
 	[Export] public Rect2 LevelBounds = new Rect2(-600, -450, 2200, 1300);
 	[Export] public Vector2 AirlockPosition = new Vector2(-400, 0);
 	[Export] public Vector2 CpsPosition = new Vector2(1400, 0);
+	[Export] public float CpsInteractRadius = 260f;
 	[Export] public float MissionTime = 0f;
 
 	private PhaseState state = PhaseState.Airlock;
 	private Dictionary<int, bool> playerCompleted = new();
-	private Dictionary<int, bool> playerAtCps = new();
+	private bool localCompleted = false;
 	private string failureReason = "";
 
-	private Area2D cpsTrigger;
-	private Node2D tetherAnchor;
 	private CpsMinigame cpsMinigame;
 	private MultiplayerSpawner spawner;
 
@@ -25,6 +24,8 @@ public partial class Phase1Manager : Node2D
 	private Label hudTether;
 	private Label hudObjective;
 	private Label hudTimer;
+	private Label hudDebug;
+	private Label hudPrompt;
 
 	private ColorRect screenOverlay;
 	private Label screenTitle;
@@ -33,13 +34,17 @@ public partial class Phase1Manager : Node2D
 	private Button screenBtnRetry;
 	private Button screenBtnMenu;
 
-	private CanvasLayer worldLayer;
+	private Node2D worldLayer;
 	private CanvasLayer hudLayer;
-	private Node2D worldBatch;
-	private Node2D starBatch;
 	private EvaPlayer localPlayer;
 
-	private Label hudDebug;
+	/// <summary>True while the player must not control the astronaut (minigame open or phase over).</summary>
+	public bool InputLocked =>
+		state == PhaseState.Completed ||
+		state == PhaseState.Failed ||
+		(cpsMinigame != null && cpsMinigame.IsOpen);
+
+	public bool IsPlayerNearCps(Vector2 worldPos) => worldPos.DistanceTo(CpsPosition) <= CpsInteractRadius;
 
 	public override void _Ready()
 	{
@@ -49,29 +54,16 @@ public partial class Phase1Manager : Node2D
 		SetupHud();
 		SetupScreens();
 
-		var cps = GetNodeOrNull<Area2D>("CpsTrigger");
-		if (cps != null)
-		{
-			cps.BodyEntered += (body) => { if (body is EvaPlayer p) p.SetAtCps(true); };
-			cps.BodyExited += (body) => { if (body is EvaPlayer p) p.SetAtCps(false); };
-		}
-
-		if (!Multiplayer.HasMultiplayerPeer())
+		FindLocalPlayer();
+		if (localPlayer == null && !Multiplayer.HasMultiplayerPeer())
 			SpawnSoloPlayer();
+
+		// Solo: always start next to the airlock (the player placed in the editor sits at 0,0).
+		if (localPlayer != null && !Multiplayer.HasMultiplayerPeer())
+			localPlayer.GlobalPosition = AirlockPosition + new Vector2(80f, 0f);
 
 		UpdateObjective();
 		GD.Print("Phase1: level built");
-	}
-
-	public override void _Draw()
-	{
-		if (starBatch == null) return;
-		var rng = new RandomNumberGenerator { Seed = 12345 };
-		for (int i = 0; i < 200; i++)
-		{
-			var pos = new Vector2(rng.RandfRange(-1200, 1200), rng.RandfRange(-900, 900));
-			DrawCircle(pos, 1.5f, Colors.White);
-		}
 	}
 
 	public override void _Process(double delta)
@@ -81,9 +73,31 @@ public partial class Phase1Manager : Node2D
 		MissionTime += (float)delta;
 		hudTimer.Text = $"Time: {MissionTime:F1}s";
 
-		UpdateTetherHud();
-		UpdateDebugHud();
-		UpdateCameraFollow();
+		if (localPlayer == null || !IsInstanceValid(localPlayer))
+			FindLocalPlayer();
+
+		UpdateProgressState();
+		UpdateHud();
+	}
+
+	private void UpdateProgressState()
+	{
+		if (localPlayer == null) return;
+		if (state == PhaseState.Minigame) return;
+
+		PhaseState next;
+		if (IsPlayerNearCps(localPlayer.GlobalPosition))
+			next = PhaseState.CpsArrival;
+		else if (localPlayer.GlobalPosition.DistanceTo(AirlockPosition) > 200f)
+			next = PhaseState.Transit;
+		else
+			next = PhaseState.Airlock;
+
+		if (next != state)
+		{
+			state = next;
+			UpdateObjective();
+		}
 	}
 
 	private void RegisterGrabInput()
@@ -92,23 +106,34 @@ public partial class Phase1Manager : Node2D
 		{
 			InputMap.AddAction("grab");
 			InputMap.ActionAddEvent("grab", new InputEventMouseButton { ButtonIndex = MouseButton.Left, Pressed = true });
-			InputMap.ActionAddEvent("grab", new InputEventMouseButton { ButtonIndex = MouseButton.Left, Pressed = false });
 		}
 	}
 
-	private void UpdateDebugHud()
+	private EvaPlayer FindLocalPlayer()
 	{
-		if (hudDebug == null || localPlayer == null) return;
-		hudDebug.Text = $"Pos: {localPlayer.GlobalPosition:F0} | Vel: {localPlayer.Velocity:F0} | State: {localPlayer.state}";
-	}
-
-	private void UpdateCameraFollow()
-	{
-		if (localPlayer == null || localPlayer.playerCamera == null) return;
-		var targetPos = localPlayer.GlobalPosition;
-		var camPos = localPlayer.playerCamera.GlobalPosition;
-		var smoothed = camPos.Lerp(targetPos, 0.15f);
-		localPlayer.playerCamera.GlobalPosition = smoothed;
+		if (Multiplayer.HasMultiplayerPeer())
+		{
+			foreach (Node node in GetTree().GetNodesInGroup("network_players"))
+			{
+				if (node is EvaPlayer p && p.IsMultiplayerAuthority())
+				{
+					localPlayer = p;
+					return p;
+				}
+			}
+		}
+		else
+		{
+			foreach (Node child in GetChildren())
+			{
+				if (child is EvaPlayer p)
+				{
+					localPlayer = p;
+					return p;
+				}
+			}
+		}
+		return null;
 	}
 
 	private void ConfigureSpawner()
@@ -121,8 +146,6 @@ public partial class Phase1Manager : Node2D
 		}
 		spawner.SpawnPath = new NodePath(".");
 		spawner.AddSpawnableScene("res://Scenes/Phase1/EvaPlayer.tscn");
-		GD.Print("Phase1: spawner configured with EvaPlayer scene");
-		
 	}
 
 	private void SetupHud()
@@ -144,95 +167,131 @@ public partial class Phase1Manager : Node2D
 
 		hudDebug = new Label { Position = new Vector2(20, 116), Text = "Debug: waiting..." };
 		hudLayer.AddChild(hudDebug);
+
+		hudPrompt = new Label { Text = "", HorizontalAlignment = HorizontalAlignment.Center };
+		hudLayer.AddChild(hudPrompt);
+		hudPrompt.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.BottomWide);
+		hudPrompt.OffsetTop = -90f;
+		hudPrompt.OffsetBottom = -50f;
+	}
+
+	private void UpdateHud()
+	{
+		if (localPlayer == null)
+		{
+			hudDebug.Text = "Debug: waiting for player...";
+			return;
+		}
+
+		hudCharges.Text = $"SAFER: {localPlayer.GetSaferCharges()}/{localPlayer.SaferChargesDefault}  (Space, jet points at cursor)";
+
+		float tension = localPlayer.GetTetherTension();
+		hudTether.Text = $"Tether: {tension * 100f:F0}%";
+		hudTether.Modulate = tension > 0.8f ? Colors.Red : (tension > 0.5f ? Colors.Yellow : Colors.White);
+
+		hudDebug.Text = $"Pos: {localPlayer.GlobalPosition:F0} | Vel: {localPlayer.Velocity:F0} | State: {localPlayer.state} | F9 = teleport to CPS";
+
+		if (state == PhaseState.CpsArrival && !localCompleted)
+			hudPrompt.Text = "Press E to calibrate the actuators";
+		else
+			hudPrompt.Text = "";
 	}
 
 	private void SpawnSoloPlayer()
 	{
+		foreach (Node child in GetChildren())
+			if (child is EvaPlayer) return;
 		var player = new EvaPlayer();
 		player.Name = "1";
-		player.Position = AirlockPosition + new Vector2(0, -30);
+		player.Position = AirlockPosition + new Vector2(80f, 0f);
 		AddChild(player);
 		localPlayer = player;
 		player.SetMultiplayerAuthority(1, true);
-		GD.Print($"Phase1: player spawned at {localPlayer.GlobalPosition}, in tree = true");
+		GD.Print($"Phase1: player spawned at {localPlayer.GlobalPosition}");
 	}
 
 	private void BuildLevel()
 	{
-		// World canvas layer (draws behind everything)
-		worldLayer = new CanvasLayer { Name = "WorldLayer", Layer = -100 };
+		// Screen-space background only (does not move with the camera).
+		var backgroundLayer = new CanvasLayer { Name = "Background", Layer = -100 };
+		AddChild(backgroundLayer);
+
+		var bg = new ColorRect { Color = new Color(0.02f, 0.02f, 0.06f, 1f) };
+		bg.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+		backgroundLayer.AddChild(bg);
+
+		// Everything else lives in WORLD space, so it follows the camera.
+		// ZIndex < 0 keeps the world behind the astronaut (the player is a sibling added earlier).
+		worldLayer = new Node2D { Name = "World", ZIndex = -10 };
 		AddChild(worldLayer);
 
-		// Dark space background
-		var bg = new ColorRect { Color = new Color(0.02f, 0.02f, 0.06f, 1f) };
-		bg.Size = GetViewport().GetVisibleRect().Size;
-		worldLayer.AddChild(bg);
+		// Stars (world space, static)
+		var rng = new RandomNumberGenerator { Seed = 12345 };
+		for (int i = 0; i < 300; i++)
+		{
+			var star = new ColorRect
+			{
+				Color = new Color(1f, 1f, 1f, rng.RandfRange(0.35f, 0.9f)),
+				Size = new Vector2(2f, 2f),
+				Position = new Vector2(rng.RandfRange(-1200f, 2200f), rng.RandfRange(-900f, 1200f))
+			};
+			worldLayer.AddChild(star);
+		}
 
-		// Star batch node (stars drawn via _Draw)
-		starBatch = new Node2D { Name = "Stars" };
-		worldLayer.AddChild(starBatch);
-
-		// Level bounds rect (visual only)
+		// Level bounds (visual only)
 		var bounds = new ColorRect { Color = new Color(0.3f, 0.3f, 0.4f, 0.15f) };
-		bounds.Size = new Vector2(LevelBounds.Size.X, LevelBounds.Size.Y);
-		bounds.Position = new Vector2(LevelBounds.Position.X, LevelBounds.Position.Y);
+		bounds.Size = LevelBounds.Size;
+		bounds.Position = LevelBounds.Position;
 		worldLayer.AddChild(bounds);
 
-		// Airlock block
+		// Airlock block (centered on AirlockPosition)
 		var airlock = new ColorRect { Size = new Vector2(100, 140), Color = new Color(0.5f, 0.5f, 0.55f) };
 		airlock.Position = AirlockPosition + new Vector2(-50, -70);
 		worldLayer.AddChild(airlock);
 		var airlockLabel = new Label
 		{
 			Text = "Utility Tunnel / MMSEV",
-			Position = AirlockPosition + new Vector2(-90, -100),
+			Position = AirlockPosition + new Vector2(-100, -110),
+			Size = new Vector2(200, 24),
 			HorizontalAlignment = HorizontalAlignment.Center
 		};
 		worldLayer.AddChild(airlockLabel);
 
-		// CPS block
+		// CPS block (centered on CpsPosition)
 		var cpsBlock = new ColorRect { Size = new Vector2(120, 160), Color = new Color(0.9f, 0.8f, 0.2f) };
 		cpsBlock.Position = CpsPosition + new Vector2(-60, -80);
 		worldLayer.AddChild(cpsBlock);
 		var cpsLabel = new Label
 		{
 			Text = "Cryogenic Propulsion Stage",
-			Position = CpsPosition + new Vector2(-120, -110),
+			Position = CpsPosition + new Vector2(-140, -110),
+			Size = new Vector2(280, 24),
 			HorizontalAlignment = HorizontalAlignment.Center
 		};
 		worldLayer.AddChild(cpsLabel);
 		var frozenMarker = new ColorRect { Size = new Vector2(20, 20), Color = Colors.Red };
-		frozenMarker.Position = CpsPosition + new Vector2(40, 40);
+		frozenMarker.Position = CpsPosition + new Vector2(-10, 30);
 		worldLayer.AddChild(frozenMarker);
 
-		// Tether anchor at airlock
-		tetherAnchor = new Node2D { Name = "TetherAnchor", Position = AirlockPosition };
-		AddChild(tetherAnchor);
+		// Tether anchor at the airlock (the player re-clips the cable to the rails it grabs)
+		var tetherAnchor = new Node2D { Name = "TetherAnchor", Position = AirlockPosition };
+		worldLayer.AddChild(tetherAnchor);
 		tetherAnchor.AddToGroup("tether_anchor");
 
-		// CPS trigger area
-		cpsTrigger = new Area2D { Name = "CpsTrigger" };
-		cpsTrigger.Position = CpsPosition;
-		var cpsShape = new CollisionShape2D();
-		cpsShape.Shape = new RectangleShape2D { Size = new Vector2(100, 100) };
-		cpsTrigger.AddChild(cpsShape);
-		AddChild(cpsTrigger);
-		cpsTrigger.AddToGroup("cps_trigger");
-
-		// Handrail path (8 rails: horizontal and vertical, with gaps)
-		CreateHandrail(new Vector2(-300, 0), new Vector2(-100, 0));
-		CreateHandrail(new Vector2(-100, 0), new Vector2(-100, -120));
-		CreateHandrail(new Vector2(-100, -120), new Vector2(100, -120));
-		CreateHandrail(new Vector2(100, -120), new Vector2(100, 0));
-		CreateHandrail(new Vector2(100, 0), new Vector2(300, 0));
-		CreateHandrail(new Vector2(300, 0), new Vector2(300, 120));
-		CreateHandrail(new Vector2(300, 120), new Vector2(1300, 120));
-		CreateHandrail(new Vector2(1300, 120), new Vector2(1300, 0));
+		// Handrail path. Gaps of ~250 px (R4->R5 and R6->R7) are beyond the arm's reach: SAFER needed.
+		CreateHandrail(new Vector2(-250, 0), new Vector2(-100, 0));
+		CreateHandrail(new Vector2(-100, -40), new Vector2(-100, -140));
+		CreateHandrail(new Vector2(-100, -140), new Vector2(400, -140));
+		CreateHandrail(new Vector2(400, -140), new Vector2(400, -40));
+		CreateHandrail(new Vector2(650, 0), new Vector2(900, 0));
+		CreateHandrail(new Vector2(900, 0), new Vector2(900, 100));
+		CreateHandrail(new Vector2(1150, 140), new Vector2(1300, 140));
+		CreateHandrail(new Vector2(1300, 140), new Vector2(1300, 0));
 	}
 
 	private void CreateHandrail(Vector2 start, Vector2 end)
 	{
-		var rail = new Handrail { Name = $"Handrail_{start}_{end}" };
+		var rail = new Handrail { Name = $"Handrail_{start.X}_{start.Y}_{end.X}_{end.Y}".Replace("-", "m") };
 		rail.Position = start;
 		rail.StartOffset = Vector2.Zero;
 		rail.EndOffset = end - start;
@@ -241,21 +300,27 @@ public partial class Phase1Manager : Node2D
 
 	private void SetupScreens()
 	{
+		var screenLayer = new CanvasLayer { Name = "Screens", Layer = 110 };
+		AddChild(screenLayer);
+
 		screenOverlay = new ColorRect
 		{
 			Color = new Color(0, 0, 0, 0.8f),
-			Size = GetViewport().GetVisibleRect().Size,
 			Visible = false
 		};
-		AddChild(screenOverlay);
+		screenLayer.AddChild(screenOverlay);
+		screenOverlay.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+
+		var center = new CenterContainer();
+		screenOverlay.AddChild(center);
+		center.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
 
 		var screenContainer = new VBoxContainer
 		{
-			Position = new Vector2(GetViewport().GetVisibleRect().Size.X / 2 - 150, GetViewport().GetVisibleRect().Size.Y / 2 - 150),
-			Size = new Vector2(300, 200),
+			CustomMinimumSize = new Vector2(520, 0),
 			Alignment = BoxContainer.AlignmentMode.Center
 		};
-		screenOverlay.AddChild(screenContainer);
+		center.AddChild(screenContainer);
 
 		screenTitle = new Label { Text = "MISSION FAILED", HorizontalAlignment = HorizontalAlignment.Center };
 		screenContainer.AddChild(screenTitle);
@@ -263,7 +328,12 @@ public partial class Phase1Manager : Node2D
 		screenReason = new Label { Text = "", HorizontalAlignment = HorizontalAlignment.Center };
 		screenContainer.AddChild(screenReason);
 
-		screenDetails = new Label { Text = "", HorizontalAlignment = HorizontalAlignment.Center };
+		screenDetails = new Label
+		{
+			Text = "",
+			HorizontalAlignment = HorizontalAlignment.Center,
+			AutowrapMode = TextServer.AutowrapMode.WordSmart
+		};
 		screenContainer.AddChild(screenDetails);
 
 		screenBtnRetry = new Button { Text = "Retry" };
@@ -274,13 +344,18 @@ public partial class Phase1Manager : Node2D
 		screenBtnMenu.Pressed += BackToMenu;
 		screenContainer.AddChild(screenBtnMenu);
 	}
+
 	public void RequestMinigame()
 	{
-		if (state == PhaseState.Minigame) return;
+		if (state == PhaseState.Completed || state == PhaseState.Failed) return;
+		if (localCompleted) return;
+		if (cpsMinigame != null && cpsMinigame.IsOpen) return;
+
 		if (cpsMinigame == null)
 		{
-			cpsMinigame = new CpsMinigame();
+			cpsMinigame = new CpsMinigame { Name = "CpsMinigame", Layer = 50 };
 			cpsMinigame.MinigameCompleted += OnLocalMinigameCompleted;
+			cpsMinigame.MinigameCancelled += OnLocalMinigameCancelled;
 			AddChild(cpsMinigame);
 		}
 		cpsMinigame.Open();
@@ -288,12 +363,22 @@ public partial class Phase1Manager : Node2D
 		UpdateObjective();
 	}
 
+	private void OnLocalMinigameCancelled()
+	{
+		if (state == PhaseState.Minigame)
+			state = PhaseState.CpsArrival;
+		UpdateObjective();
+	}
+
 	private void OnLocalMinigameCompleted()
 	{
+		localCompleted = true;
 		int peerId = Multiplayer.HasMultiplayerPeer() ? Multiplayer.GetUniqueId() : 1;
-		playerCompleted[peerId] = true;
-		RpcReportComplete(peerId);
-		CheckCompletion();
+		if (Multiplayer.HasMultiplayerPeer())
+			Rpc(nameof(RpcReportComplete), peerId);
+		else
+			RpcReportComplete(peerId);
+		UpdateObjective();
 	}
 
 	[Rpc(MultiplayerApi.RpcMode.AnyPeer, CallLocal = true)]
@@ -310,7 +395,7 @@ public partial class Phase1Manager : Node2D
 		foreach (var kv in playerCompleted)
 			if (kv.Value) completed++;
 
-		if (completed >= required && state != PhaseState.Completed)
+		if (completed >= required && state != PhaseState.Completed && state != PhaseState.Failed)
 		{
 			state = PhaseState.Completed;
 			ShowSuccessScreen();
@@ -320,42 +405,37 @@ public partial class Phase1Manager : Node2D
 	public void OnMissionFailed(string reason)
 	{
 		if (state == PhaseState.Completed || state == PhaseState.Failed) return;
-		failureReason = reason;
-		state = PhaseState.Failed;
-		RpcReportFailed(reason);
-		ShowFailureScreen();
+		if (Multiplayer.HasMultiplayerPeer())
+			Rpc(nameof(RpcReportFailed), reason);
+		else
+			RpcReportFailed(reason);
 	}
 
 	[Rpc(MultiplayerApi.RpcMode.AnyPeer, CallLocal = true)]
 	private void RpcReportFailed(string reason)
 	{
+		if (state == PhaseState.Completed || state == PhaseState.Failed) return;
 		failureReason = reason;
 		state = PhaseState.Failed;
+		if (cpsMinigame != null && cpsMinigame.IsOpen) cpsMinigame.Close();
 		ShowFailureScreen();
-	}
-
-	private void UpdateTetherHud()
-	{
-		foreach (Node node in GetTree().GetNodesInGroup("network_players"))
-		{
-			if (!(node is EvaPlayer p)) continue;
-			if (!p.IsMultiplayerAuthority()) continue;
-
-			hudCharges.Text = $"SAFER: {p.GetSaferCharges()}/3";
-			break;
-		}
 	}
 
 	private void UpdateObjective()
 	{
-		string objective = state switch
-		{
-			PhaseState.Airlock => "Objective: Exit the airlock and grab the handrails",
-			PhaseState.Transit => "Objective: Move along handrails to the CPS",
-			PhaseState.CpsArrival => "Objective: Press E at the CPS to start calibration",
-			PhaseState.Minigame => "Objective: Complete the CPS calibration minigame",
-			_ => "Objective: Mission complete"
-		};
+		string objective;
+		if (state == PhaseState.Minigame && localCompleted)
+			objective = "Objective: Waiting for your teammates to finish";
+		else
+			objective = state switch
+			{
+				PhaseState.Airlock => "Objective: Leave the airlock and grab the yellow handrails (hold left mouse)",
+				PhaseState.Transit => "Objective: Follow the handrails to the CPS (use SAFER for the gaps)",
+				PhaseState.CpsArrival => "Objective: Press E at the CPS to start calibration",
+				PhaseState.Minigame => "Objective: Spin the mouse around the dial (Esc to cancel)",
+				PhaseState.Completed => "Objective: Mission complete",
+				_ => "Objective: Mission failed"
+			};
 		hudObjective.Text = objective;
 	}
 
@@ -368,6 +448,7 @@ public partial class Phase1Manager : Node2D
 		screenBtnRetry.Visible = false;
 		screenBtnMenu.Text = "Back to Menu";
 		screenBtnMenu.Visible = true;
+		UpdateObjective();
 	}
 
 	private void ShowFailureScreen()
@@ -379,6 +460,7 @@ public partial class Phase1Manager : Node2D
 		screenBtnRetry.Visible = true;
 		screenBtnMenu.Text = "Back to Menu";
 		screenBtnMenu.Visible = true;
+		UpdateObjective();
 	}
 
 	private void Retry()

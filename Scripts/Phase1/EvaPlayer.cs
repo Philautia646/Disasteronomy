@@ -5,14 +5,14 @@ public partial class EvaPlayer : CharacterBody2D
 {
 	public enum PlayerState { Floating, Grabbed }
 
-	[Export] public float MaxDriftSpeed = 50f;
-	[Export] public float SuitAcceleration = 12f;
-	[Export] public float ArmMaxLength = 220f;
-	[Export] public float GrabPullSpeed = 100f;
-	[Export] public float RailSlideSpeed = 80f;
+	[Export] public float MaxDriftSpeed = 80f;
+	[Export] public float SuitAcceleration = 60f;
+	[Export] public float ArmMaxLength = 160f;
+	[Export] public float GrabPullSpeed = 240f;
+	[Export] public float RailSlideSpeed = 90f;
 	[Export] public int SaferChargesDefault = 3;
-	[Export] public float SaferImpulse = 380f;
-	[Export] public float SaferCooldown = 1.5f;
+	[Export] public float SaferImpulse = 140f;
+	[Export] public float SaferCooldown = 1.0f;
 	[Export] public float TetherMaxLength = 300f;
 	[Export] public float TetherSnapRatio = 1.35f;
 	[Export] public float TetherSnapTime = 0.5f;
@@ -20,9 +20,10 @@ public partial class EvaPlayer : CharacterBody2D
 	[Export] public Rect2 LevelBounds = new Rect2(-600, -450, 2200, 1300);
 	[Export] public float OutOfBoundsTimeLimit = 3f;
 	[Export] public float GrabRadius = 30f;
+	[Export] public bool DebugKeys = true; // F9 = teleport near the CPS
 
-	private Node2D tetherAnchor;
 	private Line2D tetherLine;
+	private Line2D armLine;
 	private MultiplayerSynchronizer sync;
 	private Label nicknameLabel;
 	public Camera2D playerCamera;
@@ -33,11 +34,46 @@ public partial class EvaPlayer : CharacterBody2D
 	private Vector2 armTip = Vector2.Zero;
 	private Vector2 armDirection = Vector2.Down;
 
+	// Grab / pull
+	private bool pulling = false;
+	private Vector2 pullTarget = Vector2.Zero;
+	private Vector2 lastSlideVelocity = Vector2.Zero;
+
+	// Tether: anchored at the airlock at first, then at the last handrail point the player held.
+	private bool tetherInitialized = false;
+	private Vector2 tetherAnchorPos = Vector2.Zero;
+	private float tetherDistance = 0f;
+
 	private int saferCharges;
 	private float saferCooldownTimer = 0f;
 	private float tetherStretchTimer = 0f;
 	private float outOfBoundsTimer = 0f;
-	private bool atCps = false;
+
+	private bool eWasDown = false;
+	private bool f9WasDown = false;
+
+	private Phase1Manager Manager
+	{
+		get
+		{
+			if (manager == null || !IsInstanceValid(manager))
+			{
+				Node n = GetParent();
+				while (n != null)
+				{
+					if (n is Phase1Manager m) { manager = m; break; }
+					n = n.GetParent();
+				}
+			}
+			return manager;
+		}
+	}
+
+	public override void _EnterTree()
+	{
+		if (int.TryParse(Name, out int peerId))
+			SetMultiplayerAuthority(peerId, true);
+	}
 
 	public override void _Ready()
 	{
@@ -50,9 +86,6 @@ public partial class EvaPlayer : CharacterBody2D
 			other.AddCollisionExceptionWith(this);
 		}
 
-		var anchors = GetTree().GetNodesInGroup("tether_anchor");
-		tetherAnchor = anchors.Count > 0 ? anchors[0] as Node2D : null;
-
 		var collision = new CollisionShape2D();
 		collision.Shape = new CircleShape2D { Radius = 16f };
 		AddChild(collision);
@@ -60,15 +93,21 @@ public partial class EvaPlayer : CharacterBody2D
 		tetherLine = new Line2D { Name = "TetherLine", Width = 2f };
 		AddChild(tetherLine);
 
+		armLine = new Line2D { Name = "ArmLine", Width = 4f, DefaultColor = Colors.Cyan, Visible = false };
+		AddChild(armLine);
+
 		nicknameLabel = new Label
 		{
 			Name = "NicknameLabel",
-			Position = new Vector2(0, -28f),
+			Position = new Vector2(-50f, -48f),
+			Size = new Vector2(100f, 20f),
 			HorizontalAlignment = HorizontalAlignment.Center
 		};
 		AddChild(nicknameLabel);
 
 		playerCamera = new Camera2D { Name = "PlayerCamera" };
+		playerCamera.PositionSmoothingEnabled = true;
+		playerCamera.PositionSmoothingSpeed = 8f;
 		AddChild(playerCamera);
 		if (IsMultiplayerAuthority())
 		{
@@ -98,24 +137,49 @@ public partial class EvaPlayer : CharacterBody2D
 		catch { nicknameLabel.Text = $"Jogador {Name}"; }
 
 		saferCharges = SaferChargesDefault;
-
-		manager = GetNodeOrNull<Phase1Manager>("/root/Phase1Manager");
 	}
 
 	public override void _PhysicsProcess(double delta)
 	{
-		if (!Multiplayer.HasMultiplayerPeer()) return;
-		if (!IsMultiplayerAuthority()) return;
+		if (Multiplayer.HasMultiplayerPeer() && !IsMultiplayerAuthority()) return;
 
-		saferCooldownTimer = Mathf.Max(0f, saferCooldownTimer - (float)delta);
+		float dt = (float)delta;
+		var mgr = Manager;
 
-		if (state == PlayerState.Floating)
-			UpdateFloating(delta);
+		// Edge detection for E and F9 must run every frame, even while input is locked.
+		bool eDown = Input.IsPhysicalKeyPressed(Key.E);
+		bool ePressed = eDown && !eWasDown;
+		eWasDown = eDown;
+
+		bool f9Down = Input.IsPhysicalKeyPressed(Key.F9);
+		bool f9Pressed = f9Down && !f9WasDown;
+		f9WasDown = f9Down;
+
+		saferCooldownTimer = Mathf.Max(0f, saferCooldownTimer - dt);
+
+		bool locked = mgr != null && mgr.InputLocked;
+
+		if (!locked)
+		{
+			if (DebugKeys && f9Pressed && mgr != null)
+				DebugTeleportNearCps(mgr);
+
+			if (state == PlayerState.Floating)
+				UpdateFloating(dt);
+			else
+				UpdateGrabbed(dt);
+
+			if (ePressed && mgr != null && mgr.IsPlayerNearCps(GlobalPosition))
+				mgr.RequestMinigame();
+		}
 		else
-			UpdateGrabbed(delta);
+		{
+			armLine.Visible = false;
+		}
 
-		UpdateTether(delta);
-		CheckBounds(delta);
+		UpdateTether(dt);
+		CheckBounds(dt);
+
 		MoveAndSlide();
 	}
 
@@ -129,125 +193,197 @@ public partial class EvaPlayer : CharacterBody2D
 		DrawLine(new Vector2(8, 24), new Vector2(8, 32), Colors.White, 2f);
 	}
 
-	private void UpdateFloating(double delta)
+	// Reads WASD + arrow keys by PHYSICAL key, so it does not depend on the InputMap
+	// (ui_left / ui_right had no A / D bound, which is why A and D did nothing).
+	private static Vector2 ReadMoveInput()
 	{
-		Vector2 inputDir = Input.GetVector("ui_left", "ui_right", "ui_up", "ui_down");
+		float x = 0f;
+		float y = 0f;
+		if (Input.IsPhysicalKeyPressed(Key.A) || Input.IsPhysicalKeyPressed(Key.Left)) x -= 1f;
+		if (Input.IsPhysicalKeyPressed(Key.D) || Input.IsPhysicalKeyPressed(Key.Right)) x += 1f;
+		if (Input.IsPhysicalKeyPressed(Key.W) || Input.IsPhysicalKeyPressed(Key.Up)) y -= 1f;
+		if (Input.IsPhysicalKeyPressed(Key.S) || Input.IsPhysicalKeyPressed(Key.Down)) y += 1f;
+		Vector2 v = new Vector2(x, y);
+		return v.LengthSquared() > 1f ? v.Normalized() : v;
+	}
+
+	private static bool GrabHeld() => Input.IsMouseButtonPressed(MouseButton.Left);
+
+	private void UpdateFloating(float dt)
+	{
+		Vector2 inputDir = ReadMoveInput();
 
 		if (inputDir != Vector2.Zero)
 		{
-			Velocity += inputDir * SuitAcceleration * (float)delta;
-			Velocity = Velocity.LimitLength(MaxDriftSpeed);
+			// Suit thrusters never push you ABOVE MaxDriftSpeed, but they can still brake
+			// a faster speed (e.g. after a SAFER burst) without clamping it down instantly.
+			float before = Velocity.Length();
+			Velocity += inputDir * SuitAcceleration * dt;
+			Velocity = Velocity.LimitLength(Mathf.Max(MaxDriftSpeed, before));
 		}
 
 		if (Input.IsActionJustPressed("pular") && saferCharges > 0 && saferCooldownTimer <= 0f)
 		{
-			Vector2 toCursor = GetViewport().GetMousePosition() - GlobalPosition;
-			if (toCursor.Length() > 0f) toCursor = toCursor.Normalized();
-			Velocity -= toCursor * SaferImpulse;
+			Vector2 toCursor = GetGlobalMousePosition() - GlobalPosition;
+			if (toCursor.Length() > 0.01f) toCursor = toCursor.Normalized();
+			Velocity -= toCursor * SaferImpulse; // jet toward the cursor, push the opposite way
 			saferCharges--;
 			saferCooldownTimer = SaferCooldown;
 		}
 
-		if (Input.IsActionPressed("grab"))
+		if (GrabHeld())
 		{
 			UpdateArm();
-			CheckGrab();
+			CheckGrab(null);
+			armLine.Points = new Vector2[] { Vector2.Zero, armTip - GlobalPosition };
+			armLine.Visible = state == PlayerState.Floating;
 		}
 		else
 		{
 			armTip = GlobalPosition;
+			armLine.Visible = false;
 		}
-
-		if (atCps && Input.IsActionJustPressed("inventario"))
-			manager?.RequestMinigame();
 	}
 
-	private void UpdateGrabbed(double delta)
+	private void UpdateGrabbed(float dt)
 	{
-		if (currentRail == null)
+		if (currentRail == null || !IsInstanceValid(currentRail))
 		{
-			state = PlayerState.Floating;
+			ReleaseRail();
 			return;
 		}
 
-		string axis = currentRail.GetAxis();
-		Vector2 inputDir = Input.GetVector("ui_left", "ui_right", "ui_up", "ui_down");
+		if (!GrabHeld())
+		{
+			ReleaseRail();
+			return;
+		}
 
+		Velocity = Vector2.Zero;
+
+		if (pulling)
+		{
+			Vector2 to = pullTarget - GlobalPosition;
+			float step = GrabPullSpeed * dt;
+			if (to.Length() <= step)
+			{
+				GlobalPosition = pullTarget;
+				pulling = false;
+			}
+			else
+			{
+				GlobalPosition += to.Normalized() * step;
+			}
+			armLine.Points = new Vector2[] { Vector2.Zero, pullTarget - GlobalPosition };
+			armLine.Visible = true;
+			lastSlideVelocity = Vector2.Zero;
+			return;
+		}
+
+		armLine.Visible = false;
+
+		string axis = currentRail.GetAxis();
+		Vector2 inputDir = ReadMoveInput();
 		Vector2 slideDir = axis == "horizontal"
 			? new Vector2(inputDir.X, 0f)
 			: new Vector2(0f, inputDir.Y);
 
+		lastSlideVelocity = Vector2.Zero;
 		if (slideDir != Vector2.Zero)
 		{
 			slideDir = slideDir.Normalized();
-			Position += slideDir * RailSlideSpeed * (float)delta;
+			lastSlideVelocity = slideDir * RailSlideSpeed;
+			GlobalPosition += lastSlideVelocity * dt;
 		}
 
-		if (!Input.IsActionPressed("grab"))
-		{
-			state = PlayerState.Floating;
-			currentRail = null;
-		}
+		// Stay glued to the rail (also stops sliding past the ends).
+		GlobalPosition = currentRail.GetClosestGrabPoint(GlobalPosition);
+
+		// The tether clips to the rail you are holding.
+		tetherAnchorPos = GlobalPosition;
+
+		// While holding the button, you may reach for ANOTHER rail (e.g. at a corner).
+		UpdateArm();
+		CheckGrab(currentRail);
+	}
+
+	private void ReleaseRail()
+	{
+		if (state == PlayerState.Grabbed)
+			Velocity = lastSlideVelocity; // keep a little inertia when letting go
+		state = PlayerState.Floating;
+		currentRail = null;
+		pulling = false;
+		armLine.Visible = false;
 	}
 
 	private void UpdateArm()
 	{
-		Vector2 cursorPos = GetViewport().GetMousePosition();
+		Vector2 cursorPos = GetGlobalMousePosition();
 		Vector2 toCursor = cursorPos - GlobalPosition;
 		float dist = toCursor.Length();
 
-		if (dist > 0f)
+		if (dist > 0.01f)
 			armDirection = toCursor / dist;
 
 		float armLen = Mathf.Min(dist, ArmMaxLength);
 		armTip = GlobalPosition + armDirection * armLen;
 	}
 
-	private void CheckGrab()
+	private void CheckGrab(Handrail ignore)
 	{
-		if (currentRail != null) return;
-
 		foreach (Node node in GetTree().GetNodesInGroup("handrail"))
 		{
-			if (!(node is Handrail rail)) continue;
+			if (!(node is Handrail rail) || rail == ignore) continue;
 			Vector2 closest = rail.GetClosestGrabPoint(armTip);
 			if (armTip.DistanceTo(closest) <= GrabRadius)
 			{
 				state = PlayerState.Grabbed;
 				currentRail = rail;
-				Position = closest;
+				pullTarget = rail.GetClosestGrabPoint(GlobalPosition);
+				pulling = true;
 				Velocity = Vector2.Zero;
+				tetherAnchorPos = pullTarget; // the cable clips to the rail the moment the arm touches it
 				return;
 			}
 		}
 	}
 
-	private void UpdateTether(double delta)
+	private void UpdateTether(float dt)
 	{
-		if (tetherAnchor == null) return;
+		if (!tetherInitialized)
+		{
+			var anchors = GetTree().GetNodesInGroup("tether_anchor");
+			if (anchors.Count > 0 && anchors[0] is Node2D a)
+			{
+				tetherAnchorPos = a.GlobalPosition;
+				tetherInitialized = true;
+			}
+			else
+			{
+				return;
+			}
+		}
 
-		Vector2 anchorPos = tetherAnchor.GlobalPosition;
-		Vector2 toAnchor = anchorPos - GlobalPosition;
+		Vector2 toAnchor = tetherAnchorPos - GlobalPosition;
 		float dist = toAnchor.Length();
+		tetherDistance = dist;
 
-		tetherLine.Points = new Vector2[] { GlobalPosition, anchorPos };
+		tetherLine.Points = new Vector2[] { Vector2.Zero, ToLocal(tetherAnchorPos) };
 
 		float tension = dist / TetherMaxLength;
 		tetherLine.DefaultColor = tension > 0.8f ? Colors.Red : (tension > 0.5f ? Colors.Yellow : new Color(0.6f, 0.6f, 0.6f));
 
 		if (dist > TetherMaxLength)
 		{
-			if (dist > 0f)
-			{
-				Vector2 elasticForce = (toAnchor / dist) * TetherElasticStrength * (dist - TetherMaxLength) * (float)delta;
-				Velocity += elasticForce;
-			}
+			Vector2 elasticForce = (toAnchor / dist) * TetherElasticStrength * (dist - TetherMaxLength) * dt;
+			Velocity += elasticForce;
 
 			if (dist > TetherMaxLength * TetherSnapRatio)
 			{
-				tetherStretchTimer += (float)delta;
+				tetherStretchTimer += dt;
 				if (tetherStretchTimer >= TetherSnapTime)
-					manager?.OnMissionFailed("Tether snapped!");
+					Manager?.OnMissionFailed("Tether snapped!");
 			}
 			else
 			{
@@ -260,13 +396,13 @@ public partial class EvaPlayer : CharacterBody2D
 		}
 	}
 
-	private void CheckBounds(double delta)
+	private void CheckBounds(float dt)
 	{
 		if (!LevelBounds.HasPoint(GlobalPosition))
 		{
-			outOfBoundsTimer += (float)delta;
+			outOfBoundsTimer += dt;
 			if (outOfBoundsTimer >= OutOfBoundsTimeLimit)
-				manager?.OnMissionFailed("Out of bounds!");
+				Manager?.OnMissionFailed("Out of bounds!");
 		}
 		else
 		{
@@ -274,13 +410,17 @@ public partial class EvaPlayer : CharacterBody2D
 		}
 	}
 
-	public void SetAtCps(bool value) => atCps = value;
+	private void DebugTeleportNearCps(Phase1Manager mgr)
+	{
+		ReleaseRail();
+		GlobalPosition = mgr.CpsPosition + new Vector2(-220f, 0f);
+		Velocity = Vector2.Zero;
+		tetherAnchorPos = GlobalPosition;
+		tetherInitialized = true;
+		GD.Print("[DEBUG] F9: teleported near the CPS");
+	}
 
 	public int GetSaferCharges() => saferCharges;
 
-	public override void _EnterTree()
-	{
-		if (int.TryParse(Name, out int peerId))
-			SetMultiplayerAuthority(peerId, true);
-	}
+	public float GetTetherTension() => TetherMaxLength > 0f ? tetherDistance / TetherMaxLength : 0f;
 }

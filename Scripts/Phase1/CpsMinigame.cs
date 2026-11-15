@@ -3,235 +3,299 @@ using System;
 
 public partial class CpsMinigame : CanvasLayer
 {
-    public event Action MinigameCompleted;
+	public event Action MinigameCompleted;
+	public event Action MinigameCancelled;
 
-    [Export] public float FreezeThreshold = 90f;
-    [Export] public float IdealMin = 180f;
-    [Export] public float IdealMax = 360f;
-    [Export] public float OverheatThreshold = 540f;
-    [Export] public float ProgressPerSecondIdeal = 30f;
-    [Export] public float ProgressPerSecondSlow = 6f;
-    [Export] public float MaxProgress = 100f;
-    [Export] public int PinCount = 3;
-    [Export] public float PenaltyTime = 2f;
-    [Export] public float PenaltyProgressLoss = 30f;
+	// Speeds are in degrees per second (mouse angle around the center of the screen).
+	[Export] public float FreezeThreshold = 90f;
+	[Export] public float IdealMin = 180f;
+	[Export] public float IdealMax = 360f;
+	[Export] public float OverheatThreshold = 540f;
+	[Export] public float ProgressPerSecondIdeal = 30f;
+	[Export] public float ProgressPerSecondSlow = 6f;
+	[Export] public float MaxProgress = 100f;
+	[Export] public int PinCount = 3;
+	[Export] public float PenaltyTime = 2f;
+	[Export] public float PenaltyProgressLoss = 30f;
+	[Export] public float MinRadiusPx = 25f; // ignore the mouse when it is this close to the center
 
-    private ColorRect panel;
-    private Label pinLabel;
-    private ProgressBar progressBar;
-    private ProgressBar temperatureBar;
-    private Node2D pointerPivot;
-    private Line2D pointer;
+	private const float PanelW = 360f;
+	private const float PanelH = 380f;
 
-    private float previousAngle = 0f;
-    private float angularSpeedAccum = 0f;
-    private float angleTimeSum = 0f;
-    private int angleSampleCount = 0;
+	private ColorRect panel;
+	private Label pinLabel;
+	private Label hintLabel;
+	private Label speedLabel;
+	private ProgressBar progressBar;
+	private ProgressBar temperatureBar;
+	private Node2D pointerPivot;
+	private Line2D pointer;
 
-    private int currentPin = 1;
-    private float currentProgress = 0f;
-    private float currentTemperature = 50f;
-    private float frozenTime = 0f;
-    private float overheatTime = 0f;
-    private bool isActive = false;
+	private float previousAngle = 0f;
+	private float smoothedSpeed = 0f;
 
-    public override void _Ready()
-    {
-        Visible = false;
-        BuildUI();
-    }
+	private int currentPin = 1;
+	private float currentProgress = 0f;
+	private float currentTemperature = 50f;
+	private float frozenTime = 0f;
+	private float overheatTime = 0f;
+	private bool isActive = false;
+	private bool escWasDown = false;
 
-    private void BuildUI()
-    {
-        var viewportSize = GetViewport().GetVisibleRect().Size;
+	public bool IsOpen => isActive;
 
-        panel = new ColorRect
-        {
-            Size = new Vector2(320, 320),
-            Position = new Vector2(viewportSize.X / 2 - 160, viewportSize.Y / 2 - 160),
-            Color = new Color(0.08f, 0.08f, 0.12f, 0.95f)
-        };
-        AddChild(panel);
+	public override void _Ready()
+	{
+		Visible = false;
+		BuildUI();
+	}
 
-        pinLabel = new Label
-        {
-            Text = "Pin 1/3",
-            Position = new Vector2(0, -110),
-            HorizontalAlignment = HorizontalAlignment.Center
-        };
-        panel.AddChild(pinLabel);
+	private void BuildUI()
+	{
+		panel = new ColorRect
+		{
+			Size = new Vector2(PanelW, PanelH),
+			Color = new Color(0.08f, 0.08f, 0.12f, 0.95f)
+		};
+		AddChild(panel);
 
-        progressBar = new ProgressBar
-        {
-            Size = new Vector2(220, 24),
-            Position = new Vector2(-110, 60),
-            MinValue = 0,
-            MaxValue = MaxProgress,
-            Value = 0
-        };
-        panel.AddChild(progressBar);
+		pinLabel = new Label
+		{
+			Text = "Pin 1/3",
+			Position = new Vector2(0, 12),
+			Size = new Vector2(PanelW, 24),
+			HorizontalAlignment = HorizontalAlignment.Center
+		};
+		panel.AddChild(pinLabel);
 
-        temperatureBar = new ProgressBar
-        {
-            Size = new Vector2(220, 14),
-            Position = new Vector2(-110, 92),
-            MinValue = 0,
-            MaxValue = 100,
-            Value = 50
-        };
-        panel.AddChild(temperatureBar);
+		hintLabel = new Label
+		{
+			Text = "Spin the mouse around the dial.\nNot too slow (freezes), not too fast (overheats).",
+			Position = new Vector2(0, 40),
+			Size = new Vector2(PanelW, 44),
+			HorizontalAlignment = HorizontalAlignment.Center
+		};
+		panel.AddChild(hintLabel);
 
-        pointerPivot = new Node2D { Position = Vector2.Zero };
-        panel.AddChild(pointerPivot);
+		// Dial ring (radius 110) centered at the middle of the panel area above the bars
+		Vector2 dialCenter = new Vector2(PanelW / 2f, 195f);
+		var ringPoints = new Vector2[65];
+		for (int i = 0; i <= 64; i++)
+		{
+			float a = i / 64f * Mathf.Tau;
+			ringPoints[i] = dialCenter + new Vector2(Mathf.Cos(a), Mathf.Sin(a)) * 80f;
+		}
+		var ring = new Line2D { Points = ringPoints, Width = 2f, DefaultColor = new Color(0.4f, 0.4f, 0.5f) };
+		panel.AddChild(ring);
 
-        pointer = new Line2D
-        {
-            Points = new Vector2[] { Vector2.Zero, new Vector2(0, -110) },
-            Width = 4f,
-            DefaultColor = Colors.Cyan
-        };
-        pointerPivot.AddChild(pointer);
-    }
-    private void UpdateGameplay(double delta)
-    {
-        float dt = (float)delta;
-        float speed = angularSpeedAccum;
-        angularSpeedAccum = 0f;
+		pointerPivot = new Node2D { Position = dialCenter };
+		panel.AddChild(pointerPivot);
 
-        bool inIdeal = speed >= IdealMin && speed <= IdealMax;
-        bool isFrozen = speed < FreezeThreshold && speed > 0f;
-        bool isOverheated = speed > OverheatThreshold;
+		pointer = new Line2D
+		{
+			Points = new Vector2[] { Vector2.Zero, new Vector2(80, 0) }, // points along +X = angle 0
+			Width = 4f,
+			DefaultColor = Colors.Cyan
+		};
+		pointerPivot.AddChild(pointer);
 
-        if (inIdeal)
-            currentProgress += ProgressPerSecondIdeal * dt;
-        else
-            currentProgress += ProgressPerSecondSlow * dt;
+		speedLabel = new Label
+		{
+			Text = "Speed: 0",
+			Position = new Vector2(0, 288),
+			Size = new Vector2(PanelW, 24),
+			HorizontalAlignment = HorizontalAlignment.Center
+		};
+		panel.AddChild(speedLabel);
 
-        currentProgress = Mathf.Clamp(currentProgress, 0f, MaxProgress);
+		progressBar = new ProgressBar
+		{
+			Size = new Vector2(260, 22),
+			Position = new Vector2(50, 318),
+			MinValue = 0,
+			MaxValue = MaxProgress,
+			Value = 0,
+			ShowPercentage = true
+		};
+		panel.AddChild(progressBar);
 
-        if (inIdeal)
-        {
-            currentTemperature = Mathf.Lerp(currentTemperature, 50f, dt * 2f);
-            frozenTime = 0f;
-            overheatTime = 0f;
-        }
-        else
-        {
-            if (isFrozen)
-            {
-                currentTemperature -= 25f * dt;
-                frozenTime += dt;
-            }
-            if (isOverheated)
-            {
-                currentTemperature += 35f * dt;
-                overheatTime += dt;
-            }
-        }
+		temperatureBar = new ProgressBar
+		{
+			Size = new Vector2(260, 14),
+			Position = new Vector2(50, 348),
+			MinValue = 0,
+			MaxValue = 100,
+			Value = 50,
+			ShowPercentage = false
+		};
+		panel.AddChild(temperatureBar);
+	}
 
-        currentTemperature = Mathf.Clamp(currentTemperature, 0f, 100f);
+	public void Open()
+	{
+		var viewportSize = GetViewport().GetVisibleRect().Size;
+		panel.Position = new Vector2(viewportSize.X / 2f - PanelW / 2f, viewportSize.Y / 2f - PanelH / 2f);
 
-        if ((frozenTime >= PenaltyTime || overheatTime >= PenaltyTime))
-        {
-            currentProgress -= PenaltyProgressLoss;
-            currentProgress = Mathf.Clamp(currentProgress, 0f, MaxProgress);
-            frozenTime = 0f;
-            overheatTime = 0f;
-        }
+		// The dial center on screen must match the center used to measure the mouse angle.
+		// Dial center in panel coordinates is (PanelW/2, 195); we measure from that exact point.
+		isActive = true;
+		Visible = true;
+		currentPin = 1;
+		currentProgress = 0f;
+		currentTemperature = 50f;
+		frozenTime = 0f;
+		overheatTime = 0f;
+		smoothedSpeed = 0f;
+		escWasDown = Input.IsPhysicalKeyPressed(Key.Escape);
 
-        if (currentProgress >= MaxProgress)
-        {
-            currentPin++;
-            currentProgress = 0f;
-            currentTemperature = 50f;
+		Vector2 toMouse = GetViewport().GetMousePosition() - GetDialCenterScreen();
+		previousAngle = Mathf.RadToDeg(Mathf.Atan2(toMouse.Y, toMouse.X));
 
-            if (currentPin > PinCount)
-            {
-                MinigameCompleted?.Invoke();
-                Close();
-            }
-            else
-            {
-                UpdatePinLabel();
-            }
-        }
-    }
+		UpdatePinLabel();
+	}
 
-    private void UpdatePinLabel()
-    {
-        pinLabel.Text = $"Pin {currentPin}/{PinCount}";
-    }
+	public void Close()
+	{
+		isActive = false;
+		Visible = false;
+	}
 
-    private void UpdateUIDisplay()
-    {
-        progressBar.Value = currentProgress;
-        temperatureBar.Value = currentTemperature;
+	private Vector2 GetDialCenterScreen() => panel.Position + new Vector2(PanelW / 2f, 195f);
 
-        if (currentTemperature < 30f)
-            temperatureBar.Modulate = Colors.Blue;
-        else if (currentTemperature > 70f)
-            temperatureBar.Modulate = Colors.Red;
-        else
-            temperatureBar.Modulate = Colors.Green;
+	private void UpdatePinLabel()
+	{
+		pinLabel.Text = $"Pin {currentPin}/{PinCount}";
+	}
 
-        pointerPivot.RotationDegrees = previousAngle;
-    }
+	private void UpdateInput(float dt)
+	{
+		Vector2 toMouse = GetViewport().GetMousePosition() - GetDialCenterScreen();
 
-    public void Open()
-    {
-        isActive = true;
-        Visible = true;
-        currentPin = 1;
-        currentProgress = 0f;
-        currentTemperature = 50f;
-        frozenTime = 0f;
-        overheatTime = 0f;
-        UpdatePinLabel();
-    }
+		float instSpeed = 0f;
+		if (toMouse.Length() >= MinRadiusPx && dt > 0f)
+		{
+			float newAngle = Mathf.RadToDeg(Mathf.Atan2(toMouse.Y, toMouse.X));
+			float deltaAngle = newAngle - previousAngle;
+			while (deltaAngle > 180f) deltaAngle -= 360f;
+			while (deltaAngle < -180f) deltaAngle += 360f;
+			previousAngle = newAngle;
+			instSpeed = Mathf.Abs(deltaAngle) / dt;
+		}
 
-    public void Close()
-    {
-        isActive = false;
-        Visible = false;
-    }
+		// Exponential smoothing so single-frame spikes do not flip the zones.
+		float alpha = 1f - Mathf.Exp(-dt * 8f);
+		smoothedSpeed = Mathf.Lerp(smoothedSpeed, instSpeed, alpha);
+	}
 
-    private void UpdateInput(double delta)
-    {
-        Vector2 center = new Vector2(GetViewport().GetVisibleRect().Size.X / 2, GetViewport().GetVisibleRect().Size.Y / 2);
-        Vector2 mousePos = GetViewport().GetMousePosition();
-        Vector2 toMouse = mousePos - center;
+	private void UpdateGameplay(float dt)
+	{
+		float speed = smoothedSpeed;
 
-        float newAngle = Mathf.RadToDeg(Mathf.Atan2(toMouse.Y, toMouse.X));
+		bool inIdeal = speed >= IdealMin && speed <= IdealMax;
+		bool isFrozen = speed < FreezeThreshold;
+		bool isOverheated = speed > OverheatThreshold;
 
-        float deltaAngle = newAngle - previousAngle;
-        while (deltaAngle > 180f) deltaAngle -= 360f;
-        while (deltaAngle < -180f) deltaAngle += 360f;
+		if (inIdeal)
+			currentProgress += ProgressPerSecondIdeal * dt;
+		else
+			currentProgress += ProgressPerSecondSlow * dt;
 
-        if (Mathf.Abs(deltaAngle) > 90f)
-        {
-            previousAngle = newAngle;
-            return;
-        }
+		if (inIdeal)
+		{
+			currentTemperature = Mathf.Lerp(currentTemperature, 50f, dt * 2f);
+			frozenTime = 0f;
+			overheatTime = 0f;
+		}
+		else if (isFrozen)
+		{
+			currentTemperature -= 25f * dt;
+			frozenTime += dt;
+			overheatTime = 0f;
+		}
+		else if (isOverheated)
+		{
+			currentTemperature += 35f * dt;
+			overheatTime += dt;
+			frozenTime = 0f;
+		}
+		else
+		{
+			currentTemperature = Mathf.Lerp(currentTemperature, 50f, dt * 1f);
+			frozenTime = 0f;
+			overheatTime = 0f;
+		}
 
-        angularSpeedAccum += Mathf.Abs(deltaAngle) / (float)delta;
-        angleTimeSum += (float)delta;
-        angleSampleCount++;
+		currentTemperature = Mathf.Clamp(currentTemperature, 0f, 100f);
 
-        previousAngle = newAngle;
+		if (frozenTime >= PenaltyTime || overheatTime >= PenaltyTime)
+		{
+			currentProgress -= PenaltyProgressLoss;
+			frozenTime = 0f;
+			overheatTime = 0f;
+		}
 
-        if (angleTimeSum >= 0.15f && angleSampleCount > 0)
-        {
-            angularSpeedAccum /= angleSampleCount;
-            angleTimeSum = 0f;
-            angleSampleCount = 0;
-        }
-    }
+		currentProgress = Mathf.Clamp(currentProgress, 0f, MaxProgress);
 
-    public override void _Process(double delta)
-    {
-        if (!isActive) return;
-        UpdateInput(delta);
-        UpdateGameplay(delta);
-        UpdateUIDisplay();
-    }
+		if (currentProgress >= MaxProgress)
+		{
+			currentPin++;
+			currentProgress = 0f;
+			currentTemperature = 50f;
+
+			if (currentPin > PinCount)
+			{
+				Close();
+				MinigameCompleted?.Invoke();
+			}
+			else
+			{
+				UpdatePinLabel();
+			}
+		}
+	}
+
+	private void UpdateUIDisplay()
+	{
+		progressBar.Value = currentProgress;
+		temperatureBar.Value = currentTemperature;
+
+		string zone;
+		Color zoneColor;
+		if (smoothedSpeed >= IdealMin && smoothedSpeed <= IdealMax) { zone = "IDEAL"; zoneColor = Colors.Cyan; }
+		else if (smoothedSpeed < FreezeThreshold) { zone = "TOO SLOW"; zoneColor = new Color(0.4f, 0.6f, 1f); }
+		else if (smoothedSpeed > OverheatThreshold) { zone = "TOO FAST"; zoneColor = Colors.Red; }
+		else { zone = "OK"; zoneColor = Colors.White; }
+
+		speedLabel.Text = $"Speed: {smoothedSpeed:F0} deg/s  [{zone}]";
+		pointer.DefaultColor = zoneColor;
+
+		if (currentTemperature < 30f)
+			temperatureBar.Modulate = Colors.Blue;
+		else if (currentTemperature > 70f)
+			temperatureBar.Modulate = Colors.Red;
+		else
+			temperatureBar.Modulate = Colors.Green;
+
+		pointerPivot.RotationDegrees = previousAngle;
+	}
+
+	public override void _Process(double delta)
+	{
+		if (!isActive) return;
+
+		bool esc = Input.IsPhysicalKeyPressed(Key.Escape);
+		bool escPressed = esc && !escWasDown;
+		escWasDown = esc;
+		if (escPressed)
+		{
+			Close();
+			MinigameCancelled?.Invoke();
+			return;
+		}
+
+		float dt = (float)delta;
+		UpdateInput(dt);
+		UpdateGameplay(dt);
+		if (isActive) UpdateUIDisplay();
+	}
 }
