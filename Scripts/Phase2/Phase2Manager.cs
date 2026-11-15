@@ -50,6 +50,8 @@ public partial class Phase2Manager : Node2D
 	[Export] public float VisionRadius = 0.2f;       // in mist, relative to screen height
 
 	private const int ValveCount = 3;
+	private const string Phase2Controls = "A / D: move  |  Space: jump  |  W / S: climb racks\nHold E: close valves and replace filters  |  E: use terminal\nP: pause  |  F9: debug teleport";
+	private const string Phase2Briefing = "A micrometeoroid the radar never saw has punctured the ISS Lab and cracked the ammonia lines of the ECLSS. Toxic mist is flooding the lower levels and your oxygen is running out.\n\nClose the 3 manual valves, replace the carbon filters to keep your oxygen up, and restart the life-support software at the upper terminal using the code Houston radios in (7 second delay, and the signal is bad).";
 	private const string FogShaderCode = @"
 shader_type canvas_item;
 uniform float strength = 0.0;
@@ -117,6 +119,7 @@ void fragment() {
 	private Label hudRadio;
 	private Label hudToast;
 	private float toastTimer = 0f;
+	private float alarmTimer = 0f;
 
 	// Terminal UI
 	private CanvasLayer terminalLayer;
@@ -172,6 +175,8 @@ void fragment() {
 		SetupTerminal();
 		SetupScreens();
 		UpdateObjective();
+		PauseMenu.Attach(this, Phase2Controls);
+		BriefingScreen.Open(this, "PHASE 2 - CASCADE EFFECT", Phase2Briefing, Phase2Controls);
 		GD.Print($"Phase2: level built (debug: reset code = {resetCode})");
 	}
 
@@ -501,6 +506,16 @@ void fragment() {
 		float sanityDecay = SanityDecayBase + (inMist ? SanityDecayMist * leak : 0f);
 		sanity = Mathf.Max(SanityFloor, sanity - sanityDecay * dt);
 
+		if (oxygen > 0f && oxygen < 25f)
+		{
+			alarmTimer -= dt;
+			if (alarmTimer <= 0f)
+			{
+				alarmTimer = 4f;
+				Sfx.Play(this, "oxygen_alarm");
+			}
+		}
+
 		if (oxygen <= 0f)
 			Fail("Oxygen depleted.");
 	}
@@ -585,6 +600,7 @@ void fragment() {
 		{
 			valvesClosed++;
 			it.Visual.Color = new Color(0.2f, 0.85f, 0.3f);
+			Sfx.Play(this, "valve_close");
 			ShowToast(valvesClosed >= ValveCount ? "All valves closed. The leak is stopped." : $"Valve closed ({valvesClosed}/{ValveCount})");
 		}
 		else if (it.Kind == InteractKind.Filter)
@@ -592,6 +608,7 @@ void fragment() {
 			filtersUsed++;
 			oxygen = Mathf.Min(OxygenMax, oxygen + FilterOxygenBonus);
 			it.Visual.Color = new Color(0.25f, 0.27f, 0.3f);
+			Sfx.Play(this, "filter_replace");
 			ShowToast($"Carbon filter replaced: +{FilterOxygenBonus:F0} oxygen");
 		}
 
@@ -637,6 +654,7 @@ void fragment() {
 
 		radioLog.Add(msg);
 		if (radioLog.Count > 4) radioLog.RemoveAt(0);
+		Sfx.Play(this, "radio_incoming");
 		ShowToast("Incoming transmission from Houston");
 	}
 
@@ -760,6 +778,7 @@ void fragment() {
 	{
 		if (terminalInput.Length >= 4) return;
 		terminalInput += digit.ToString();
+		Sfx.Play(this, "terminal_key");
 		terminalStatusLabel.Text = "";
 		RefreshTerminalCode();
 	}
@@ -775,6 +794,7 @@ void fragment() {
 		else
 		{
 			terminalStatusLabel.Text = "INVALID CODE";
+			Sfx.Play(this, "terminal_error");
 			terminalInput = "";
 			RefreshTerminalCode();
 		}
@@ -794,6 +814,7 @@ void fragment() {
 				terminalDone = true;
 				terminalCloseTimer = 1.2f;
 				terminalStatusLabel.Text = "CODE ACCEPTED";
+				Sfx.Play(this, "terminal_ok");
 				if (terminalInteractable != null)
 				{
 					terminalInteractable.Done = true;
@@ -855,6 +876,7 @@ void fragment() {
 		if (player != null) player.Locked = true;
 		hudPrompt.Text = "";
 
+		Sfx.Play(this, "mission_fail");
 		screenOverlay.Visible = true;
 		screenTitle.Text = "MISSION FAILED";
 		screenReason.Text = reason;
@@ -865,6 +887,7 @@ void fragment() {
 
 	private void ShowSuccessScreen()
 	{
+		Sfx.Play(this, "mission_complete");
 		screenOverlay.Visible = true;
 		screenTitle.Text = "PHASE 2 COMPLETE";
 		screenReason.Text = "Leak sealed. Life support restored.";

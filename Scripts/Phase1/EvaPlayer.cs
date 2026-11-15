@@ -21,8 +21,12 @@ public partial class EvaPlayer : CharacterBody2D
 	[Export] public float OutOfBoundsTimeLimit = 3f;
 	[Export] public float GrabRadius = 30f;
 	[Export] public bool DebugKeys = true; // F9 = teleport near the CPS
+	/// <summary>If this SpriteFrames resource exists it replaces the placeholder drawing. Animations: float, grab (sprites face RIGHT).</summary>
+	[Export] public string SpriteFramesPath = "res://Sprites/player_eva.tres";
 
 	private Line2D tetherLine;
+	private AnimatedSprite2D sprite;
+	private bool facingRight = true;
 	private Line2D armLine;
 	private MultiplayerSynchronizer sync;
 	private Label nicknameLabel;
@@ -89,6 +93,8 @@ public partial class EvaPlayer : CharacterBody2D
 		var collision = new CollisionShape2D();
 		collision.Shape = new CircleShape2D { Radius = 16f };
 		AddChild(collision);
+
+		SetupSprite();
 
 		tetherLine = new Line2D { Name = "TetherLine", Width = 2f };
 		AddChild(tetherLine);
@@ -181,10 +187,33 @@ public partial class EvaPlayer : CharacterBody2D
 		CheckBounds(dt);
 
 		MoveAndSlide();
+		UpdateSprite();
+	}
+
+	private void SetupSprite()
+	{
+		if (string.IsNullOrEmpty(SpriteFramesPath) || !ResourceLoader.Exists(SpriteFramesPath)) return;
+		var frames = GD.Load<SpriteFrames>(SpriteFramesPath);
+		if (frames == null) return;
+		sprite = new AnimatedSprite2D { Name = "Sprite", SpriteFrames = frames };
+		AddChild(sprite);
+		if (frames.HasAnimation("float")) sprite.Play("float");
+	}
+
+	private void UpdateSprite()
+	{
+		if (sprite == null) return;
+		if (Mathf.Abs(Velocity.X) > 5f) facingRight = Velocity.X > 0f;
+		sprite.FlipH = !facingRight;
+		string anim = state == PlayerState.Grabbed ? "grab" : "float";
+		if (!sprite.SpriteFrames.HasAnimation(anim)) anim = "float";
+		if (sprite.SpriteFrames.HasAnimation(anim) && (string)sprite.Animation != anim)
+			sprite.Play(anim);
 	}
 
 	public override void _Draw()
 	{
+		if (sprite != null) return; // a real sprite is in use
 		DrawCircle(Vector2.Zero, 14f, Colors.White);
 		DrawRect(new Rect2(-10, 6, 20, 22), Colors.Gray);
 		DrawLine(new Vector2(-10, 12), new Vector2(-20, 12), Colors.White, 2f);
@@ -229,6 +258,7 @@ public partial class EvaPlayer : CharacterBody2D
 			Velocity -= toCursor * SaferImpulse; // jet toward the cursor, push the opposite way
 			saferCharges--;
 			saferCooldownTimer = SaferCooldown;
+			Sfx.Play(this, "safer_burst");
 		}
 
 		if (GrabHeld())
@@ -343,6 +373,7 @@ public partial class EvaPlayer : CharacterBody2D
 				pullTarget = rail.GetClosestGrabPoint(GlobalPosition);
 				pulling = true;
 				Velocity = Vector2.Zero;
+				Sfx.Play(this, "rail_grab");
 				tetherAnchorPos = pullTarget; // the cable clips to the rail the moment the arm touches it
 				return;
 			}

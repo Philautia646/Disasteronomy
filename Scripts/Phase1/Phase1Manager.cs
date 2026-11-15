@@ -11,6 +11,7 @@ public partial class Phase1Manager : Node2D
 	[Export] public Vector2 CpsPosition = new Vector2(1400, 0);
 	[Export] public float CpsInteractRadius = 260f;
 	[Export] public float MissionTime = 0f;
+	[Export] public string NextScenePath = "res://Scenes/Phase2/Phase2.tscn";
 
 	private PhaseState state = PhaseState.Airlock;
 	private Dictionary<int, bool> playerCompleted = new();
@@ -33,6 +34,7 @@ public partial class Phase1Manager : Node2D
 	private Label screenDetails;
 	private Button screenBtnRetry;
 	private Button screenBtnMenu;
+	private Button screenBtnNext;
 
 	private Node2D worldLayer;
 	private CanvasLayer hudLayer;
@@ -43,6 +45,9 @@ public partial class Phase1Manager : Node2D
 		state == PhaseState.Completed ||
 		state == PhaseState.Failed ||
 		(cpsMinigame != null && cpsMinigame.IsOpen);
+
+	private const string Phase1Controls = "W A S D: suit thrusters  |  Hold left mouse: reach for a handrail\nA / D or W / S: slide along the rail  |  Space: SAFER (jet fires toward the cursor, you go the other way)\nE: calibrate at the CPS  |  P: pause  |  F9: debug teleport";
+	private const string Phase1Briefing = "Two thermal actuators on the solar wings are frozen. Leave the Utility Tunnel in your EMU suit and follow the yellow handrails to the Cryogenic Propulsion Stage.\n\nStay clipped to the rails: if your tether stretches too far, it snaps. Use the SAFER nitrogen jets only for the big gaps, you have just a few charges.";
 
 	public bool IsPlayerNearCps(Vector2 worldPos) => worldPos.DistanceTo(CpsPosition) <= CpsInteractRadius;
 
@@ -63,6 +68,8 @@ public partial class Phase1Manager : Node2D
 			localPlayer.GlobalPosition = AirlockPosition + new Vector2(80f, 0f);
 
 		UpdateObjective();
+		PauseMenu.Attach(this, Phase1Controls);
+		BriefingScreen.Open(this, "PHASE 1 - VACUUM CALIBRATION", Phase1Briefing, Phase1Controls);
 		GD.Print("Phase1: level built");
 	}
 
@@ -340,6 +347,10 @@ public partial class Phase1Manager : Node2D
 		screenBtnRetry.Pressed += Retry;
 		screenContainer.AddChild(screenBtnRetry);
 
+		screenBtnNext = new Button { Text = "Next: Phase 2", Visible = false };
+		screenBtnNext.Pressed += GoToNextPhase;
+		screenContainer.AddChild(screenBtnNext);
+
 		screenBtnMenu = new Button { Text = "Back to Menu" };
 		screenBtnMenu.Pressed += BackToMenu;
 		screenContainer.AddChild(screenBtnMenu);
@@ -446,8 +457,10 @@ public partial class Phase1Manager : Node2D
 		screenReason.Text = "Thermal actuators unfrozen.";
 		screenDetails.Text = $"Time: {MissionTime:F1}s | Energy: 160 kWh | Comms: stable (1.3-2s latency) | Mass: ~115,000 kg";
 		screenBtnRetry.Visible = false;
+		screenBtnNext.Visible = ResourceLoader.Exists(NextScenePath);
 		screenBtnMenu.Text = "Back to Menu";
 		screenBtnMenu.Visible = true;
+		Sfx.Play(this, "mission_complete");
 		UpdateObjective();
 	}
 
@@ -458,14 +471,22 @@ public partial class Phase1Manager : Node2D
 		screenReason.Text = failureReason;
 		screenDetails.Text = "Return to the airlock and try again.";
 		screenBtnRetry.Visible = true;
+		screenBtnNext.Visible = false;
 		screenBtnMenu.Text = "Back to Menu";
 		screenBtnMenu.Visible = true;
+		Sfx.Play(this, "mission_fail");
 		UpdateObjective();
 	}
 
 	private void Retry()
 	{
 		GetTree().ChangeSceneToFile("res://Scenes/Phase1/Phase1.tscn");
+	}
+
+	private void GoToNextPhase()
+	{
+		if (ResourceLoader.Exists(NextScenePath))
+			GetTree().ChangeSceneToFile(NextScenePath);
 	}
 
 	private void BackToMenu()

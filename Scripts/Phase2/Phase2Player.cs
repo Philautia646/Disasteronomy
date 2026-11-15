@@ -21,6 +21,8 @@ public partial class Phase2Player : CharacterBody2D
 	[Export] public float ClimbSpeed = 110f;
 	[Export] public float CoyoteTime = 0.1f;
 	[Export] public float CameraZoom = 1.4f;
+	/// <summary>If this SpriteFrames resource exists it is used instead of the placeholder drawing. Animations: idle, walk, jump, climb (sprites face RIGHT).</summary>
+	[Export] public string SpriteFramesPath = "res://Sprites/player_phase2.tres";
 
 	/// <summary>Set by the manager (terminal open, phase over): no input, but physics still runs.</summary>
 	public bool Locked = false;
@@ -31,6 +33,7 @@ public partial class Phase2Player : CharacterBody2D
 	private bool facingRight = true;
 	private float coyote = 0f;
 	private bool jumpWasDown = false;
+	private AnimatedSprite2D sprite;
 
 	public bool IsClimbing => climbing;
 
@@ -55,6 +58,7 @@ public partial class Phase2Player : CharacterBody2D
 	{
 		var shape = new CollisionShape2D { Shape = new RectangleShape2D { Size = new Vector2(18f, 30f) } };
 		AddChild(shape);
+		SetupSprite();
 
 		// Layer 4 = player. Mask 3 = solid (1) + one-way platforms (2).
 		CollisionLayer = 4;
@@ -76,8 +80,30 @@ public partial class Phase2Player : CharacterBody2D
 		playerCamera.MakeCurrent();
 	}
 
+	private void SetupSprite()
+	{
+		if (string.IsNullOrEmpty(SpriteFramesPath) || !ResourceLoader.Exists(SpriteFramesPath)) return;
+		var frames = GD.Load<SpriteFrames>(SpriteFramesPath);
+		if (frames == null) return;
+		sprite = new AnimatedSprite2D { Name = "Sprite", SpriteFrames = frames };
+		AddChild(sprite);
+		if (frames.HasAnimation("idle")) sprite.Play("idle");
+	}
+
+	private void UpdateAnimation(bool onFloor)
+	{
+		if (sprite == null) return;
+		sprite.FlipH = !facingRight;
+		string anim = climbing ? "climb" : (!onFloor ? "jump" : (Mathf.Abs(Velocity.X) > 10f ? "walk" : "idle"));
+		if (!sprite.SpriteFrames.HasAnimation(anim)) anim = "idle";
+		if (sprite.SpriteFrames.HasAnimation(anim) && (string)sprite.Animation != anim)
+			sprite.Play(anim);
+		sprite.SpeedScale = (climbing && Mathf.Abs(Velocity.Y) < 1f) ? 0f : 1f;
+	}
+
 	public override void _Draw()
 	{
+		if (sprite != null) return; // a real sprite is in use
 		float dir = facingRight ? 1f : -1f;
 		// SCBA tank on the back
 		DrawRect(new Rect2(facingRight ? -13f : 7f, -4f, 6f, 14f), new Color(0.6f, 0.6f, 0.65f));
@@ -134,6 +160,7 @@ public partial class Phase2Player : CharacterBody2D
 			MoveAndSlide();
 			if (inputY > 0f && IsOnFloor())
 				climbing = false;
+			UpdateAnimation(false);
 			return;
 		}
 
@@ -167,9 +194,11 @@ public partial class Phase2Player : CharacterBody2D
 		{
 			v.Y = JumpVelocity;
 			coyote = 0f;
+			Sfx.Play(this, "jump");
 		}
 
 		Velocity = v;
 		MoveAndSlide();
+		UpdateAnimation(IsOnFloor());
 	}
 }
